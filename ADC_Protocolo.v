@@ -3,7 +3,7 @@
 // Company: 
 // Engineer: 
 // 
-// Create Date:    16:46:33 10/01/2015 
+// Create Date:    15:14:52 09/26/2015 
 // Design Name: 
 // Module Name:    ADC_Protocolo 
 // Project Name: 
@@ -18,88 +18,63 @@
 // Additional Comments: 
 //
 //////////////////////////////////////////////////////////////////////////////////
-module ADC_Protocolo(input wire SDATA, reset ,CS,SCLK,
-							output reg rx_done_tick, 
-							/*output reg [15:0] b_reg,*/
-							output wire [11:0]data_Out
-    );
+module ADC_Protocolo(input sdata, CS, sclk, reset,//Pines del ADC
+		output [15:0] d_out,//Dato para enviar al filtro
+		output reg listo);
+					reg [3:0] contador; //Para ir revisando el sclk, son necesarios 16 conteos
+					reg [15:0] dato_dig; //Ir guardando el dato conforme vaya avanzando el contador
+					reg [15:0]dato_temp; //Para asignar al dato de salida, se le agregan los 4 bits de signo
 
-	localparam [1:0]
-		DetectaCS = 2'b00,
-		Recibir = 2'b01,		//Estados de la máquina
-		Carga = 2'b10;
-
-		//Declaración de Señales
-
-	reg[1:0] state_reg , state_next; // cambiar estado
-	reg [3:0] n_reg, n_next; /// Para llevar cuenta de datos recibidos
-	reg [15:0] b_next, b_reg;
-
-	/////Partes secuencial
-	always @(posedge reset,  negedge SCLK)
-		if (reset)
+		parameter [1:0] negedgeCS=2'b0, conteo=2'b1, posedgeCS=2'b11;
+		reg [1:0] estado, sigestado;
+		initial 
 			begin
-				state_reg <= DetectaCS;
-				n_reg <= 4'd0;
-				b_reg <= 16'd0;
+				contador <= 4'b0;
+				dato_dig <= 16'b0;
+				dato_temp <= 16'b0;
+				listo <= 1'b0;
 			end
-		else
-			begin 
-				state_reg <= state_next;
-				n_reg <= n_next;
-				b_reg <= b_next;
+	always @(negedge sclk, posedge reset)
+		begin
+			if (reset)begin
+				estado<=negedgeCS;
+				contador<=4'b0;
+				dato_dig <= 16'b0;
 			end
-
-	///Parte combinacional
-
-	always @*
-	 begin
-		state_next =state_reg;
-		rx_done_tick = 1'b0;
-		n_next = n_reg;
-		b_next = b_reg;
-
-
-		case(state_reg)
-
-			DetectaCS :
-				if(~CS)
-					begin
-					state_next = Recibir;
-					n_next = 4'd0;
-
-					b_next={b_reg[14:0],SDATA};
-					end
-
-				else state_next = DetectaCS;
-
-
-			Recibir :
-				begin
-					b_next = {b_reg [14:0], SDATA}; /// se llena registro desplazamiento
-					if(n_reg == 4'd14)
-						state_next = Carga;
-					else 
-						n_next = n_reg + 4'd1;
-				end
-
-			Carga : 
-					if(CS)
-						begin
-							state_next= DetectaCS;
-							rx_done_tick = 1'b1;
+			else begin
+				listo <= listo;	
+				estado <= sigestado;	
+				case(estado)
+					posedgeCS: contador <= 4'b0;
+					conteo: if ((contador>3)||(contador<4'b1111))begin
+						contador <= contador + 4'b1;
+						dato_dig <= {dato_dig[14:0], sdata};
+						listo <= 1'b0;
 						end
-					else 
-						state_next = Carga;
-						
-
-			default  			 		
-					state_next = DetectaCS;
-		endcase
-		
-	end
-		
-
-	assign data_Out = b_reg [11:0];
-
+						else if (contador<3) contador <= contador + 4'b1;
+						else if (contador == 4'b1111)begin
+							dato_dig <= dato_dig[15:0] /*16'b1111100000000000*/;
+							listo <= 1'b1;
+						end
+					negedgeCS:begin
+						listo <= 1'b1;
+						dato_temp <= dato_dig;
+					end
+				endcase
+			end
+		end
+	always @(*)
+		begin
+			case(estado)
+				negedgeCS: if (CS==0) sigestado=conteo;
+					else sigestado=negedgeCS;
+				conteo: if (contador<4'b1111) sigestado=conteo;
+					else sigestado=posedgeCS;
+				posedgeCS: if (CS==0) sigestado=posedgeCS;
+					else sigestado=negedgeCS;
+				default sigestado=negedgeCS;
+			endcase
+		end
+	assign d_out = {1'b0,dato_temp[15:1]};
 endmodule
+
